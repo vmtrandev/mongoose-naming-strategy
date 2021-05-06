@@ -1,3 +1,4 @@
+/* eslint-disable class-methods-use-this */
 /* eslint-disable func-names */
 /* eslint-disable consistent-return */
 /* eslint-disable no-plusplus */
@@ -20,10 +21,12 @@ import {
   isObject,
 } from './utils';
 
-export default class MongooseNamingStrategy {
+export class MongooseNamingStrategy {
   private autoload: boolean;
 
   private exclusion: string[];
+
+  private customMapping?: string[];
 
   private schemaNamingDefination: ENaming;
 
@@ -80,7 +83,14 @@ export default class MongooseNamingStrategy {
     fn: TProcessTransform
   ): TProcessTransform {
     return (str) => {
+      if (this.customMapping) {
+        const val = this.customMapping.find((e) => e === str);
+        if (val) return val;
+      }
+
       if (this.exclusion.find((e) => e === str)) return str;
+
+      if (str.startsWith('$')) return str;
       return fn(str);
     };
   }
@@ -220,7 +230,7 @@ export default class MongooseNamingStrategy {
     });
   }
 
-  private attachDocumentMiddlewares(schema: Schema) {
+  private attachDocumentHooks(schema: Schema) {
     const self = this;
     schema.pre(/^find/, function (next) {
       const conditions = (<any>this)._conditions;
@@ -262,14 +272,55 @@ export default class MongooseNamingStrategy {
     });
   }
 
+  private attachUpdateHooks(schema: Schema) {
+    const self = this;
+    schema.pre(/^update/, function (next: any) {
+      const update = (<any>this)._update;
+      const conditions = (<any>this)._conditions;
+
+      if (isObject(update)) {
+        (<any>this)._update = deepTransform(update, self.handlePostTransform);
+      }
+
+      if (isObject(conditions)) {
+        (<any>this)._conditions = deepTransform(
+          conditions,
+          self.handlePostTransform
+        );
+      }
+      next();
+    });
+  }
+
+  private attachRemoveHook(schema: Schema) {
+    const self = this;
+    schema.pre(/^delete/, function (next: any) {
+      const conditions = (<any>this)._conditions;
+
+      if (isObject(conditions)) {
+        (<any>this)._conditions = deepTransform(
+          conditions,
+          self.handlePostTransform
+        );
+      }
+
+      next();
+    });
+  }
+
   public getPlugin(): (schema: Schema) => void {
     return (schema) => {
+      const mappers = <IKeysMapper>(<any>schema)[KEYS.KEY_MAPPERS];
+      if (mappers) return;
+
       this.makePreTransform(schema);
       this.attachVirtual(schema);
       this.attachTransform(schema);
       this.attachCountHook(schema);
       this.attachDistinctHook(schema);
-      this.attachDocumentMiddlewares(schema);
+      this.attachDocumentHooks(schema);
+      this.attachUpdateHooks(schema);
+      this.attachRemoveHook(schema);
       this.attachPostLeanHook(schema);
     };
   }
