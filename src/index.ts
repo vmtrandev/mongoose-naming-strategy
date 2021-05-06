@@ -70,7 +70,7 @@ export class MongooseNamingStrategy {
     }
 
     if (exclusion) this.exclusion = exclusion;
-    else this.exclusion = ['_id', '_v'];
+    else this.exclusion = ['_id', '__v'];
 
     if (mappers) this.schemaMappers = mappers;
     else this.schemaMappers = [];
