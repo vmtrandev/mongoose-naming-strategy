@@ -123,7 +123,7 @@ export class MongooseNamingStrategy {
 
     Object.defineProperty(schema, KEYS.FN_TRANSFORM_OBJ, {
       writable: false,
-      value: makeTransform(keyMappers, { toJSON: true }),
+      value: makeTransform(keyMappers, { toJSON: false }),
     });
   }
 
