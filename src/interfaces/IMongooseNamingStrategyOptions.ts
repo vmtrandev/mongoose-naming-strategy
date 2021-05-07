@@ -5,9 +5,11 @@ export interface IMongooseNamingStrategyOptions {
   autoload: boolean;
   schemaType: ENaming;
 
-  exclusion?: string[];
+  exclusions?: string[];
   mappers?: ISchemaMapper<unknown>[];
   readonly runSignature?: unique symbol;
+
+  logger?: boolean | string[];
 
   camelToSnake?: (prop: string) => string;
   snakeToCamel?: (prop: string) => string;
