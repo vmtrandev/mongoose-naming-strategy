@@ -1,3 +1,5 @@
+import { isObjectId } from './validate';
+
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 export type TCaseTransform = (str: string) => string;
 
@@ -6,8 +8,8 @@ export const snakeToCamel = (str: string) =>
 
 export const camelToSnake = (str: string) =>
   str
-    .replace(/[\w]([A-Z])/g, (m) => `${m[0]  }_${  m[1]}`)
-    .replace(/[A-Z]([A-Z])/g, (m) => `${m[0]  }_${  m[1]}`)
+    .replace(/[\w]([A-Z])/g, (m) => `${m[0]}_${m[1]}`)
+    .replace(/[A-Z]([A-Z])/g, (m) => `${m[0]}_${m[1]}`)
     .toLowerCase();
 
 export type TRuntimeTransformMethod = (
@@ -52,29 +54,18 @@ export const deepTransform = (
   handler: TCaseTransform,
   mutate?: boolean
 ): Record<string, unknown> =>
+  target &&
   Object.entries(target).reduce<Record<string, unknown>>(
     (acc, [key, val]) => {
       const newKey = handler(key);
 
-      if (
-        typeof val === 'object' &&
-        val !== null &&
-        Object.getOwnPropertyNames(val).findIndex((e) => e === '_bsontype') !==
-          -1
-      ) {
-        acc[newKey] = val;
-        mutate && key !== newKey && delete acc[key];
-
-        return acc;
-      }
-
       if (Array.isArray(val)) {
         const newVal = val.map((e) => {
-          if (typeof e !== 'object') {
+          if (typeof e !== 'object' || isObjectId(e)) {
             return e;
           }
 
-          return deepTransform(e, handler);
+          return deepTransform(e, handler, mutate);
         });
 
         acc[newKey] = newVal as any;
@@ -82,8 +73,19 @@ export const deepTransform = (
         return acc;
       }
 
-      if (typeof val === 'object' && val !== null && Object.keys(val).length) {
-        const newVal = deepTransform(<Record<string, unknown>>val, handler);
+      if (typeof val === 'object') {
+        if (val === null || !Object.keys(val).length || isObjectId(val)) {
+          acc[newKey] = val;
+          mutate && key !== newKey && delete acc[key];
+
+          return acc;
+        }
+
+        const newVal = deepTransform(
+          <Record<string, unknown>>val,
+          handler,
+          mutate
+        );
         acc[newKey] = newVal;
         mutate && key !== newKey && delete acc[key];
         return acc;

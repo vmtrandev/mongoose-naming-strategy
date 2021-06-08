@@ -21,16 +21,17 @@ import {
 } from './utils';
 import { createLogger } from './utils/logger';
 
+export * from './constants';
+export * from './interfaces';
+
 export class MongooseNamingStrategy {
   #autoload: boolean;
 
   #exclusions: string[];
 
-  #customMapping?: string[];
+  #customMapping = new Map<string, string>();
 
-  #schemaMappers: ISchemaMapper<unknown>[];
-
-  #runSignature: symbol;
+  #runSignature?: symbol | string;
 
   #schemaToDb = false;
 
@@ -42,13 +43,15 @@ export class MongooseNamingStrategy {
     [key: string]: (...args: unknown[]) => void;
   };
 
+  #leanSignature: symbol | string | false;
+
   constructor(opts: IMongooseNamingStrategyOptions) {
     const {
       autoload,
       exclusions: exclusion,
       schemaType,
-      mappers,
       runSignature,
+      leanSignature,
       logger,
       camelToSnake: customCamelToSnake,
       snakeToCamel: customSnakeToCamel,
@@ -56,8 +59,6 @@ export class MongooseNamingStrategy {
 
     this.#logger = createLogger(logger || true);
     this.#autoload = autoload;
-
-    // this.#schemaNamingDefination = schemaType;
 
     if (schemaType === ENaming.CAMEL_CASE) {
       this.#handlePreTransform = this.generateNamingTransformation(
@@ -78,11 +79,11 @@ export class MongooseNamingStrategy {
     if (exclusion) this.#exclusions = exclusion;
     else this.#exclusions = ['_id', '__v'];
 
-    if (mappers) this.#schemaMappers = mappers;
-    else this.#schemaMappers = [];
-
     if (runSignature) this.#runSignature = runSignature;
     else this.#runSignature = SIGNATURE.RUN;
+
+    if (leanSignature) this.#leanSignature = leanSignature;
+    else this.#leanSignature = SIGNATURE.LEAN_QUERY;
   }
 
   public setAuloload(enabled: boolean): this {
@@ -148,7 +149,10 @@ export class MongooseNamingStrategy {
   }
 
   public addExclusions(...val: string[]): this {
-    this.#exclusions = [...this.#exclusions, ...val];
+    val.forEach((e) => {
+      if (this.#exclusions.findIndex((v) => v === e) === -1)
+        this.#exclusions.push(e);
+    });
     return this;
   }
 
@@ -163,18 +167,36 @@ export class MongooseNamingStrategy {
     return this;
   }
 
+  public useLeanSignature(signature: string | symbol | false): this {
+    this.#autoload = false;
+    this.#leanSignature = signature;
+    return this;
+  }
+
+  public useRunSignature(signature: string | symbol): this {
+    this.#autoload = false;
+    this.#runSignature = signature;
+    return this;
+  }
+
+  public addCustomMapping(key: string, value: string): this {
+    this.#customMapping.set(key, value);
+    return this;
+  }
+
   private generateNamingTransformation(
     fn: TProcessTransform
   ): TProcessTransform {
     return (str) => {
       if (this.#customMapping) {
-        const val = this.#customMapping.find((e) => e === str);
+        const val = this.#customMapping.get(str);
         if (val) return val;
       }
 
       if (this.#exclusions.find((e) => e === str)) return str;
 
       if (str.startsWith('$')) return str;
+
       return fn(str);
     };
   }
@@ -185,13 +207,20 @@ export class MongooseNamingStrategy {
     )
       return;
 
-    const { obj } = schema;
+    const { tree } = <any>schema;
 
-    const keyMappers = Object.keys(obj).reduce<IKeysMapper>(
-      (acc, cur) => ({
-        ...acc,
-        [this.#handlePreTransform(cur)]: cur,
-      }),
+    const keyMappers = Object.entries(tree).reduce<IKeysMapper>(
+      (acc, [cur, curValue]) => {
+        if (
+          curValue &&
+          typeof curValue === 'object' &&
+          curValue.constructor.name === 'VirtualType'
+        )
+          return acc;
+
+        acc[this.#handlePreTransform(cur)] = cur;
+        return acc;
+      },
       {}
     );
 
@@ -240,6 +269,7 @@ export class MongooseNamingStrategy {
     });
   }
 
+  // eslint-disable-next-line class-methods-use-this
   private attachTransform(schema: Schema) {
     const transformJSON = (<any>schema)[
       KEYS.FN_TRANSFORM_JSON
@@ -255,13 +285,11 @@ export class MongooseNamingStrategy {
       },
     });
 
-    if (this.#autoload) {
-      schema.set('toObject', {
-        transform(doc: Record<string, unknown>) {
-          return transformObj(doc);
-        },
-      });
-    }
+    schema.set('toObject', {
+      transform(doc: Record<string, unknown>) {
+        return transformObj(doc);
+      },
+    });
   }
 
   private attachDistinctHook(schema: Schema) {
@@ -296,15 +324,26 @@ export class MongooseNamingStrategy {
     const self = this;
     // eslint-disable-next-line func-names
     schema.post(/^find/, function (res, next: any) {
-      if (!(<any>this)._mongooseOptions?.lean) {
+      if (!(<any>this)._mongooseOptions.lean) {
         return next();
       }
+
+      if (
+        self.#leanSignature &&
+        !(<any>this)._mongooseOptions?.lean[self.#leanSignature]
+      ) {
+        return next();
+      }
+
+      if (!self.#autoload) return next();
 
       if (Array.isArray(res)) {
         for (let i = 0; i < res.length; i++) {
           const doc = res[i];
           res[i] = deepTransform(doc, self.#handlePreTransform);
         }
+
+        return next();
       }
 
       if (isObject(res)) {
@@ -394,6 +433,10 @@ export class MongooseNamingStrategy {
 
   public getPlugin(): (schema: Schema) => void {
     return (schema) => {
+      if (Object.getOwnPropertySymbols(schema).includes(KEYS.EXCLUDE_SCHEMA)) {
+        return;
+      }
+
       const mappers = <IKeysMapper>(<any>schema)[KEYS.KEY_MAPPERS];
       if (mappers) return;
 
@@ -407,5 +450,12 @@ export class MongooseNamingStrategy {
       this.attachRemoveHook(schema);
       this.attachPostLeanHook(schema);
     };
+  }
+
+  public static ExcludeOne(schema: Schema) {
+    Object.defineProperty(schema, KEYS.EXCLUDE_SCHEMA, {
+      value: true,
+      writable: false,
+    });
   }
 }

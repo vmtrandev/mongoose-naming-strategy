@@ -8,6 +8,7 @@ export interface IMongooseNamingStrategyOptions {
   exclusions?: string[];
   mappers?: ISchemaMapper<unknown>[];
   readonly runSignature?: unique symbol;
+  readonly leanSignature?: unique symbol;
 
   logger?: boolean | string[];
 
